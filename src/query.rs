@@ -1,7 +1,12 @@
+use sqlx::Executor;
+use sqlx::Type;
+use sqlx::types::JsonValue;
 use async_trait::async_trait;
 use sqlx::{Database, FromRow, IntoArguments, Pool};
 use std::marker::PhantomData;
 use serde::Serialize;
+use serde_json::Value;
+use sqlx::types::Json;
 
 /// Represents the type of SQL query to execute.
 #[derive(Debug, Clone)]
@@ -39,9 +44,9 @@ where
     columns: Vec<String>,
     table: Option<String>,
     conditions: Vec<String>,
-    params: Vec<Box<dyn Send + Sync + Serialize>>,
+    params: Vec<Json<Value>>, // Changed to sqlx::types::Json<Value>
     joins: Vec<Join>,
-    values: Vec<Box<dyn Send + Sync + Serialize>>,
+    values: Vec<Json<Value>>, // Changed to sqlx::types::Json<Value>
     group_by: Vec<String>,
     having: Option<String>,
     order_by: Vec<String>,
@@ -170,8 +175,8 @@ where
     ///
     /// # Example
     /// ```
-    /// use sqlx::query;
-    /// query.columns(&["id", "name", "age"]);
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().columns(&["id", "name", "age"]);
     /// ```
     pub fn columns(mut self, cols: &[&str]) -> Self {
         self.columns = cols.iter().map(|&s| s.to_string()).collect();
@@ -185,8 +190,8 @@ where
     ///
     /// # Example
     /// ```
-    /// use sqlx::query;
-    /// query.from("users");
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().from("users");
     /// ```
     pub fn from(mut self, table: &str) -> Self {
         self.table = Some(table.to_string());
@@ -200,8 +205,8 @@ where
     ///
     /// # Example
     /// ```
-    /// use sqlx::query;
-    /// query.where_clause("age > ?");
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().where_clause("age > 18");
     /// ```
     pub fn where_clause(mut self, condition: &str) -> Self {
         self.conditions.push(condition.to_string());
@@ -215,35 +220,57 @@ where
     ///
     /// # Example
     /// ```
-    /// query.add_param(18);
+    /// use naturalquerylib::Query;
+    /// let query = Query::insert_into("users").add_param(18);
     /// ```
     pub fn add_param<T>(mut self, param: T) -> Self
     where
         T: Send + Sync + Serialize + 'static,
     {
-        self.params.push(Box::new(param));
+        let value = serde_json::to_value(param).expect("Error serializing the parameter");
+        self.params.push(Json(value));
         self
     }
 
     /// Sets the values for INSERT or UPDATE queries.
+    ///
+    /// # Arguments
+    /// * `vals` - A slice of values.
+    ///
+    /// # Example
+    /// ```
+    /// use naturalquerylib::Query;
+    /// let query = Query::insert_into("users").values(&["John Doe", 30]);
+    /// ```
     pub fn values<T>(mut self, vals: &[T]) -> Self
     where
         T: Send + Sync + Serialize + 'static,
     {
         for val in vals {
-            self.values.push(Box::new(val));
+            let value = serde_json::to_value(val).expect("Error serializing the value");
+            self.values.push(Json(value));
         }
         self
     }
 
     /// Sets column-value pairs for UPDATE queries.
+    ///
+    /// # Arguments
+    /// * `col_vals` - A slice of tuples containing column names and their corresponding values.
+    ///
+    /// # Example
+    /// ```
+    /// use naturalquerylib::Query;
+    /// let query = Query::update("users").set(&[("name", "Jane Doe"), ("age", 25)]);
+    /// ```
     pub fn set<T>(mut self, col_vals: &[(&str, T)]) -> Self
     where
         T: Send + Sync + Serialize + Clone + 'static,
     {
         for &(col, ref val) in col_vals {
             self.columns.push(col.to_string());
-            self.values.push(Box::new(val.clone()));
+            let value = serde_json::to_value(val.clone()).expect("Error serializing the value");
+            self.values.push(Json(value));
         }
         self
     }
@@ -257,8 +284,8 @@ where
     ///
     /// # Example
     /// ```
-    /// use naturalquerylib::query::JoinType;
-    /// query.join(JoinType::Inner, "orders", "users.id = orders.user_id");
+    /// use naturalquerylib::JoinType;
+    /// let query = Query::select().join(JoinType::Inner, "orders", "users.id = orders.user_id");
     /// ```
     pub fn join(mut self, join_type: JoinType, table: &str, condition: &str) -> Self {
         self.joins.push(Join {
@@ -276,7 +303,8 @@ where
     ///
     /// # Example
     /// ```
-    /// query.group_by(&["department"]);
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().group_by(&["department"]);
     /// ```
     pub fn group_by(mut self, cols: &[&str]) -> Self {
         self.group_by = cols.iter().map(|&s| s.to_string()).collect();
@@ -290,7 +318,8 @@ where
     ///
     /// # Example
     /// ```
-    /// query.having("COUNT(*) > ?");
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().having("COUNT(*) > 5");
     /// ```
     pub fn having(mut self, condition: &str) -> Self {
         self.having = Some(condition.to_string());
@@ -300,11 +329,12 @@ where
     /// Adds ORDER BY clauses to the query.
     ///
     /// # Arguments
-    /// * `cols` - A slice of column names.
+    /// * `cols` - A slice of column names with sorting directions.
     ///
     /// # Example
     /// ```
-    /// query.order_by(&["name ASC", "age DESC"]);
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().order_by(&["name ASC", "age DESC"]);
     /// ```
     pub fn order_by(mut self, cols: &[&str]) -> Self {
         self.order_by = cols.iter().map(|&s| s.to_string()).collect();
@@ -318,7 +348,8 @@ where
     ///
     /// # Example
     /// ```
-    /// query.limit(10);
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().limit(10);
     /// ```
     pub fn limit(mut self, limit: u64) -> Self {
         self.limit = Some(limit);
@@ -332,7 +363,8 @@ where
     ///
     /// # Example
     /// ```
-    /// query.offset(5);
+    /// use naturalquerylib::Query;
+    /// let query = Query::select().offset(5);
     /// ```
     pub fn offset(mut self, offset: u64) -> Self {
         self.offset = Some(offset);
@@ -438,89 +470,92 @@ where
     }
 }
 
-/// Trait for executing queries asynchronously.
-#[async_trait]
-pub trait AsyncExecute<'a, DB>
-where
-    DB: Database,
-{
-    /// Executes the query and returns the number of affected rows.
-    ///
-    /// # Arguments
-    /// * `pool` - The database connection pool.
-    ///
-    /// # Returns
-    /// A `Result` containing the number of affected rows or an `sqlx::Error`.
-    async fn execute(&self, pool: &Pool<DB>) -> Result<u64, sqlx::Error>;
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{Sqlite, SqlitePool, SqlitePoolOptions};
+    use serde::{Deserialize, Serialize};
 
-/// Trait for fetching query results asynchronously.
-#[async_trait]
-pub trait AsyncFetch<'a, DB, T>
-where
-    DB: Database,
-    T: for<'r> FromRow<'r, DB::Row> + Send + Unpin,
-{
-    /// Executes the query and returns a list of mapped results.
-    ///
-    /// # Arguments
-    /// * `pool` - The database connection pool.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Vec` of mapped results or an `sqlx::Error`.
-    async fn fetch_all(&self, pool: &Pool<DB>) -> Result<Vec<T>, sqlx::Error>;
-}
+    #[derive(Debug, Serialize, Deserialize, sqlx::FromRow, PartialEq)]
+    struct User {
+        id: i64,
+        name: String,
+        age: i32,
+    }
 
-#[async_trait]
-impl<'a, DB> AsyncExecute<'a, DB> for Query<DB>
-where
-    DB: Database,
-    for<'q> DB::Arguments: Send + IntoArguments<'q, DB>,
-{
-    async fn execute(&self, pool: &Pool<DB>) -> Result<u64, sqlx::Error> {
-        let query_str = self.build();
+    /// Helper function to create an in-memory SQLite database for testing.
+    async fn get_test_pool() -> SqlitePool {
+        SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(":memory:")
+            .await
+            .unwrap()
+    }
 
-        let mut query = sqlx::query(&query_str);
+    /// Test building a SELECT query with multiple clauses.
+    #[tokio::test]
+    async fn test_select_query_build() {
+        let query = Query::<Sqlite>::select()
+            .columns(&["id", "name", "age"])
+            .from("users")
+            .where_clause("age > ?")
+            .order_by(&["age DESC"])
+            .limit(10)
+            .offset(5);
 
-        // Bind values and parameters
-        for value in &self.values {
-            query = query.bind(serde_json::to_value(value).unwrap());
-        }
+        let sql = query.build();
 
-        for param in &self.params {
-            query = query.bind(serde_json::to_value(param).unwrap());
-        }
+        assert_eq!(
+            sql,
+            "SELECT id, name, age FROM users WHERE age > ? ORDER BY age DESC LIMIT 10 OFFSET 5"
+        );
+    }
 
-        let result = query.execute(pool).await?;
-        Ok(result.rows_affected())
+    /// Test building a query with JOIN clauses.
+    #[tokio::test]
+    async fn test_join_query_build() {
+        let query = Query::<Sqlite>::select()
+            .columns(&["u.name", "o.order_date"])
+            .from("users u")
+            .join(JoinType::Inner, "orders o", "u.id = o.user_id")
+            .where_clause("u.id = ?")
+            .order_by(&["o.order_date DESC"]);
+
+        let sql = query.build();
+
+        assert_eq!(
+            sql,
+            "SELECT u.name, o.order_date FROM users u INNER JOIN orders o ON u.id = o.user_id WHERE u.id = ? ORDER BY o.order_date DESC"
+        );
+    }
+
+    /// Test constructing a query with a subquery in the WHERE clause.
+    #[tokio::test]
+    async fn test_subquery_build() {
+        let subquery = Query::<Sqlite>::select()
+            .columns(&["id"])
+            .from("users")
+            .where_clause("age > ?")
+            .build();
+
+        let main_query = Query::<Sqlite>::select()
+            .columns(&["name"])
+            .from("employees")
+            .where_clause(&format!("user_id IN ({})", subquery));
+
+        let sql = main_query.build();
+
+        assert_eq!(
+            sql,
+            "SELECT name FROM employees WHERE user_id IN (SELECT id FROM users WHERE age > ?)"
+        );
     }
 }
 
-#[async_trait]
-impl<'a, DB, T> AsyncFetch<'a, DB, T> for Query<DB>
-where
-    DB: Database,
-    T: for<'r> FromRow<'r, DB::Row> + Send + Unpin,
-    for<'q> DB::Arguments: Send + IntoArguments<'q, DB>,
-{
-    async fn fetch_all(&self, pool: &Pool<DB>) -> Result<Vec<T>, sqlx::Error> {
-        let query_str = self.build();
 
-        let mut query = sqlx::query_as::<DB, T>(&query_str);
 
-        // Bind values and parameters
-        for value in &self.values {
-            query = query.bind(serde_json::to_value(value).unwrap());
-        }
 
-        for param in &self.params {
-            query = query.bind(serde_json::to_value(param).unwrap());
-        }
 
-        let rows = query.fetch_all(pool).await?;
-        Ok(rows)
-    }
-}
 
 
 
