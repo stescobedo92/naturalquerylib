@@ -1,6 +1,13 @@
 [package]
 name = "naturalquerylib"
 version = "0.1.0"
+authors = ["Sergio Triana Escobedo <stescobedo.31@gmail.com>"]
+description = "A Rust SQL query builder with async support."
+homepage = "https://github.com/stescobedo92/naturalquerylib"
+repository = "https://github.com/stescobedo92/naturalquerylib"
+license = "MIT"
+keywords = ["sql", "query-builder", "async"]
+categories = ["database", "web-programming"]
 edition = "2021"
 
 [dependencies]
